@@ -6,7 +6,10 @@
     "download": "node chromium-downloader.js",
     "launch": "node chromium-downloader.js launch",
     "list": "node chromium-downloader.js list",
-    "fingerprint": "node fingerprint-browser.js"
+    "fingerprint": "node fingerprint-browser.js",
+    "fp:save": "node fingerprint-browser.js --save",
+    "fp:use": "node fingerprint-browser.js --use",
+    "fp:list": "node fingerprint-browser.js --list"
   },
   "dependencies": {
     "playwright": "^1.57.0"

@@ -1,4 +1,10 @@
 const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
+const readline = require('readline');
+
+const FINGERPRINTS_FILE = path.join(__dirname, 'fingerprints.json');
+const PROFILES_DIR = path.join(__dirname, 'browser-profiles');
 
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -52,6 +58,56 @@ function generateRandomFingerprint() {
     colorDepth: pick([24, 32]),
     canvasNoise: rand(1, 10),
   };
+}
+
+// 保存指纹
+function saveFingerprint(fp, name) {
+  let fingerprints = {};
+  if (fs.existsSync(FINGERPRINTS_FILE)) {
+    fingerprints = JSON.parse(fs.readFileSync(FINGERPRINTS_FILE, 'utf-8'));
+  }
+  fingerprints[name] = { ...fp, createdAt: new Date().toISOString() };
+  fs.writeFileSync(FINGERPRINTS_FILE, JSON.stringify(fingerprints, null, 2));
+  console.log(`✅ 指纹已保存为: ${name}`);
+}
+
+// 加载指纹
+function loadFingerprint(name) {
+  if (!fs.existsSync(FINGERPRINTS_FILE)) return null;
+  const fingerprints = JSON.parse(fs.readFileSync(FINGERPRINTS_FILE, 'utf-8'));
+  return fingerprints[name] || null;
+}
+
+// 列出所有保存的指纹
+function listFingerprints() {
+  if (!fs.existsSync(FINGERPRINTS_FILE)) {
+    console.log('没有保存的指纹。');
+    return [];
+  }
+  const fingerprints = JSON.parse(fs.readFileSync(FINGERPRINTS_FILE, 'utf-8'));
+  const names = Object.keys(fingerprints);
+  if (names.length === 0) {
+    console.log('没有保存的指纹。');
+    return [];
+  }
+  console.log('已保存的指纹：\n');
+  names.forEach((name, i) => {
+    const fp = fingerprints[name];
+    console.log(`  ${i + 1}. ${name}`);
+    console.log(`     平台: ${fp.platform} | 语言: ${fp.locale} | 创建: ${fp.createdAt?.split('T')[0] || '未知'}`);
+  });
+  return names;
+}
+
+// 删除指纹
+function deleteFingerprint(name) {
+  if (!fs.existsSync(FINGERPRINTS_FILE)) return;
+  const fingerprints = JSON.parse(fs.readFileSync(FINGERPRINTS_FILE, 'utf-8'));
+  if (fingerprints[name]) {
+    delete fingerprints[name];
+    fs.writeFileSync(FINGERPRINTS_FILE, JSON.stringify(fingerprints, null, 2));
+    console.log(`✅ 已删除指纹: ${name}`);
+  }
 }
 
 function createFingerprintScript(fp) {
@@ -129,10 +185,8 @@ function createFingerprintScript(fp) {
   `;
 }
 
-async function launchBrowser() {
-  const fp = generateRandomFingerprint();
-
-  console.log('生成随机指纹:');
+async function launchBrowser(fp, saveName) {
+  console.log('使用指纹:');
   console.log(`  UA: ${fp.userAgent}`);
   console.log(`  分辨率: ${fp.screen.width}x${fp.screen.height}`);
   console.log(`  语言: ${fp.locale}`);
@@ -142,7 +196,18 @@ async function launchBrowser() {
   console.log(`  CPU核心: ${fp.hardwareConcurrency}`);
   console.log(`  内存: ${fp.deviceMemory}GB`);
 
-  const browser = await chromium.launch({
+  // 为每个指纹创建独立的数据目录
+  const profileName = saveName || fp.profileId || `temp-${Date.now()}`;
+  const userDataDir = path.join(PROFILES_DIR, profileName);
+  
+  if (!fs.existsSync(userDataDir)) {
+    fs.mkdirSync(userDataDir, { recursive: true });
+  }
+  
+  console.log(`  数据目录: ${userDataDir}`);
+
+  // 使用 launchPersistentContext 保持数据持久化
+  const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     args: [
       '--disable-blink-features=AutomationControlled',
@@ -151,10 +216,7 @@ async function launchBrowser() {
       '--no-default-browser-check',
       `--lang=${fp.locale}`,
       `--accept-lang=${fp.locale}`,
-    ]
-  });
-
-  const context = await browser.newContext({
+    ],
     userAgent: fp.userAgent,
     viewport: fp.viewport,
     locale: fp.locale,
@@ -162,15 +224,97 @@ async function launchBrowser() {
   });
 
   await context.addInitScript(createFingerprintScript(fp));
-  const page = await context.newPage();
+  const page = context.pages()[0] || await context.newPage();
   await page.goto('https://browserleaks.com/canvas');
 
-  console.log('\n浏览器已启动，每次运行指纹都不同');
-  console.log('测试网站:');
-  console.log('  - https://browserleaks.com/canvas');
-  console.log('  - https://fingerprintjs.github.io/fingerprintjs/');
+  // 保存指纹（包含 profileId）
+  if (saveName) {
+    fp.profileId = saveName;
+    saveFingerprint(fp, saveName);
+  }
 
-  return { browser, context, page, fingerprint: fp };
+  console.log('\n浏览器已启动，数据将保存到独立目录');
+  return { context, page, fingerprint: fp };
 }
 
-launchBrowser();
+function showHelp() {
+  console.log(`
+指纹浏览器工具
+
+用法:
+  node fingerprint-browser.js [命令] [参数]
+
+命令:
+  (无)              生成随机指纹并启动浏览器
+  --save <名称>     生成随机指纹，保存并启动
+  --use <名称>      使用已保存的指纹启动
+  --list            列出所有保存的指纹
+  --delete <名称>   删除指定指纹
+  --help            显示帮助
+
+示例:
+  node fingerprint-browser.js                    # 随机指纹
+  node fingerprint-browser.js --save test1       # 保存为 test1
+  node fingerprint-browser.js --use test1        # 使用 test1
+  node fingerprint-browser.js --list             # 列出所有
+`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (args[0] === '--help' || args[0] === '-h') {
+    showHelp();
+    return;
+  }
+
+  if (args[0] === '--list') {
+    listFingerprints();
+    return;
+  }
+
+  if (args[0] === '--delete') {
+    if (args[1]) {
+      deleteFingerprint(args[1]);
+    } else {
+      console.log('请指定要删除的指纹名称');
+    }
+    return;
+  }
+
+  if (args[0] === '--use') {
+    if (!args[1]) {
+      // 交互式选择
+      const names = listFingerprints();
+      if (names.length === 0) return;
+      
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question('\n请输入序号或名称: ', async (answer) => {
+        rl.close();
+        const idx = parseInt(answer) - 1;
+        const name = idx >= 0 && idx < names.length ? names[idx] : answer.trim();
+        const fp = loadFingerprint(name);
+        if (fp) {
+          await launchBrowser(fp);
+        } else {
+          console.log(`未找到指纹: ${name}`);
+        }
+      });
+      return;
+    }
+    const fp = loadFingerprint(args[1]);
+    if (fp) {
+      await launchBrowser(fp);
+    } else {
+      console.log(`未找到指纹: ${args[1]}`);
+    }
+    return;
+  }
+
+  // 生成随机指纹
+  const fp = generateRandomFingerprint();
+  const saveName = args[0] === '--save' ? args[1] : null;
+  await launchBrowser(fp, saveName);
+}
+
+main();

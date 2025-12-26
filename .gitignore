@@ -1,3 +1,5 @@
 node_modules/
 chrome/
 chrome-profiles/
+browser-profiles/
+fingerprints.json
