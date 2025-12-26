@@ -1,0 +1,14 @@
+{
+  "name": "chrome-tools",
+  "version": "1.0.0",
+  "description": "Chrome 版本管理和指纹浏览器工具",
+  "scripts": {
+    "download": "node chromium-downloader.js",
+    "launch": "node chromium-downloader.js launch",
+    "list": "node chromium-downloader.js list",
+    "fingerprint": "node fingerprint-browser.js"
+  },
+  "dependencies": {
+    "playwright": "^1.57.0"
+  }
+}
